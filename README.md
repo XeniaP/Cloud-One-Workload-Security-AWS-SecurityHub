@@ -24,9 +24,10 @@ When the template completes its creation in the Outputs you will find the necess
 
 <details>
 <summary>Lambda only</summary>
-In this repository in the src folder you will find the Lambda code used which you can use to do the integration step by step.
+In this repository in the **src** folder you will find the Lambda code used which you can use to do the integration step by step.
 following this documentation:
-> [SNS Integration Workload Security](https://cloudone.trendmicro.com/docs/workload-security/event-sns/)
+
+>[SNS Integration Workload Security](https://cloudone.trendmicro.com/docs/workload-security/event-sns/)
 </details>
 
 ## Contributing
