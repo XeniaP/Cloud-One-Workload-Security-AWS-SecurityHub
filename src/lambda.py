@@ -27,7 +27,6 @@ def verify_required_properties(ws_event):
     for prop in required_properties:
         if not prop in ws_event:
             result = False
-            print(result)
             return result
 
 def select_asff_eventType(EventType, types):
@@ -104,22 +103,7 @@ def addAdditionalInformation(Event, finding):
         select_asff_eventType(Event["EventType"], finding["Types"])
         finding['Title'] = Event['OSSEC_Description']
     if "AppControlEvent" in Event["EventType"]:
-        Process = {
-            "Name": Event['FileName'],
-            "Path": Event['Path'],
-            "Pid": Event['ProcessID'],
-        }
-        finding["Process"] = Process
-        if(Event['Operation'] <=1):
-            finding['Severity']['Label'] = "LOW"
-            finding['ProductFields']['trend-micro:SHA256'] = Event['SHA256'] if 'SHA256' in Event else ''
-            finding['Title'] = "User {} performs allowed Execution of Unrecognized Software".format(Event['UserName'])
-        else:
-            finding['Severity']['Label'] = "INFORMATIONAL"
-            finding['ProductFields']['trend-micro:SHA256'] = Event['SHA256'] if 'SHA256' in Event else ''
-            finding['Title'] = "User {} tried performs Execution but Agent taking action of Block".format(Event['UserName'])
         finding['Types'].append("Unusual Behaviors/Application")
-        finding['Title'] = "User {} performs allowed Execution of Unrecognized Software".format(Event['UserName'])
     if 'Tags' in Event:
         finding['ProductFields']['trend-micro:Tags'] = Event['Tags']
     if 'OriginString' in Event:
@@ -166,8 +150,7 @@ def workload_security_event_to_asff(ws_event, region, awsaccountid):
             'trend-micro:Hostname': ws_event['Hostname'] if 'Hostname' in ws_event else '',
             'trend-micro:HostSecurityPolicyID': str(ws_event['HostSecurityPolicyID']) if 'HostSecurityPolicyID' in ws_event else '',
             'trend-micro:HostSecurityPolicyName': ws_event['HostSecurityPolicyName'] if 'HostSecurityPolicyName' in ws_event else '',
-            'trend-micro:Origin' : ws_event['OriginString'] if 'OriginString' in ws_event else '',
-            'trend-micro:EventType' : ws_event['EventType'] if 'EventType' in ws_event else ''
+            'trend-micro:Origin' : ws_event['OriginString'] if 'OriginString' in ws_event else ''
             },
         "Description": "Workload Security Event, type: {}".format(event_types[ws_event["EventType"]]),
         "Resources": [

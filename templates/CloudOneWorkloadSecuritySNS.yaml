@@ -1,8 +1,4 @@
 AWSTemplateFormatVersion: 2010-09-09
-Parameters:
-  APIKEY:
-    Description: Api key for use API in Cloud One Workload Security
-    Type: String
 Resources:
   C1WSGroup:
     Type: AWS::IAM::Group
@@ -50,7 +46,6 @@ Resources:
               - Effect: Allow
                 Action: 
                   - securityhub:BatchImportFindings
-                  - securityhub:BatchUpdateFindings
                   - logs:CreateLogStream
                   - logs:CreateLogGroup
                   - logs:PutLogEvents
@@ -97,7 +92,6 @@ Resources:
               for prop in required_properties:
                   if not prop in ws_event:
                       result = False
-                      print(result)
                       return result
 
           def select_asff_eventType(EventType, types):
@@ -174,22 +168,7 @@ Resources:
                   select_asff_eventType(Event["EventType"], finding["Types"])
                   finding['Title'] = Event['OSSEC_Description']
               if "AppControlEvent" in Event["EventType"]:
-                  Process = {
-                      "Name": Event['FileName'],
-                      "Path": Event['Path'],
-                      "Pid": Event['ProcessID'],
-                  }
-                  finding["Process"] = Process
-                  if(Event['Operation'] <=1):
-                      finding['Severity']['Label'] = "LOW"
-                      finding['ProductFields']['trend-micro:SHA256'] = Event['SHA256'] if 'SHA256' in Event else ''
-                      finding['Title'] = "User {} performs allowed Execution of Unrecognized Software".format(Event['UserName'])
-                  else:
-                      finding['Severity']['Label'] = "INFORMATIONAL"
-                      finding['ProductFields']['trend-micro:SHA256'] = Event['SHA256'] if 'SHA256' in Event else ''
-                      finding['Title'] = "User {} tried performs Execution but Agent taking action of Block".format(Event['UserName'])
                   finding['Types'].append("Unusual Behaviors/Application")
-                  finding['Title'] = "User {} performs allowed Execution of Unrecognized Software".format(Event['UserName'])
               if 'Tags' in Event:
                   finding['ProductFields']['trend-micro:Tags'] = Event['Tags']
               if 'OriginString' in Event:
@@ -236,8 +215,7 @@ Resources:
                       'trend-micro:Hostname': ws_event['Hostname'] if 'Hostname' in ws_event else '',
                       'trend-micro:HostSecurityPolicyID': str(ws_event['HostSecurityPolicyID']) if 'HostSecurityPolicyID' in ws_event else '',
                       'trend-micro:HostSecurityPolicyName': ws_event['HostSecurityPolicyName'] if 'HostSecurityPolicyName' in ws_event else '',
-                      'trend-micro:Origin' : ws_event['OriginString'] if 'OriginString' in ws_event else '',
-                      'trend-micro:EventType' : ws_event['EventType'] if 'EventType' in ws_event else ''
+                      'trend-micro:Origin' : ws_event['OriginString'] if 'OriginString' in ws_event else ''
                       },
                   "Description": "Workload Security Event, type: {}".format(event_types[ws_event["EventType"]]),
                   "Resources": [
@@ -286,112 +264,6 @@ Resources:
                       'saved_events': saved_events,
                       'issues': (total_events - saved_events)
                       }
-  ApplicationBlockRule:
-    Type: AWS::Lambda::Function
-    Properties:
-      FunctionName: ApplicationBlockRule
-      Handler: index.lambda_handler
-      Role: 
-        Fn::GetAtt:
-          - LambdaRole
-          - Arn
-      Runtime: "python3.8"
-      MemorySize: 128
-      Timeout: 50
-      Code:
-        ZipFile: |
-          import json
-          import os
-          import urllib3
-          import boto3
-
-          http = urllib3.PoolManager()
-
-          mainUrl = "https://cloudone.trendmicro.com/api/"
-          headers = {
-              'api-version': 'v1',
-              'Content-Type': 'application/json',
-              'api-secret-key': os.environ["APIKEY"]
-          }
-
-          def lambda_handler(event, context):
-              for finding in event['detail']['findings']:
-                  if(finding['GeneratorId'] == 'trend-micro-workload-security-applicationcontrol'):
-                      productARN = finding['ProductArn']
-                      findingId = finding['Id']
-                      hostID = finding['ProductFields']['trend-micro:HostID']
-                      processHash = finding['ProductFields']['trend-micro:SHA256']
-                      searchSoftwareChanges(hostID, processHash, findingId, productARN)
-
-          def searchSoftwareChanges(computerID, sha256, findingId, productARN):
-              url=mainUrl+"softwarechanges/search"
-              print("HostID", computerID)
-              print("SHA256", sha256)
-              payload = json.dumps({"searchCriteria": [{"fieldName": "computerID","numericTest": "equal","numericValue": computerID},{"fieldName": "sha256","stringTest": "equal","stringValue": sha256}]})
-
-              r = http.request("POST", url, headers=headers, body=payload)
-              response = json.loads(r.data.decode('utf-8'))
-              if(len(response['softwareChanges'])>0):
-                  changeProcessID = response['softwareChanges'][0]['ID']
-                  blockExecution(changeProcessID)
-                  updateFinding(findingId, productARN)
-              else:
-                  if(getAgentConfiguraton(computerID, sha256)):
-                      updateFinding(findingId, productARN)
-
-          def blockExecution(changeProcessID):
-              url = mainUrl+"softwarechanges/review"
-              
-              payload = json.dumps({
-                  "softwareChangeIDs": [
-                      changeProcessID,
-                  ],
-                  "action": "block"
-              })
-              r = http.request("POST", url, headers=headers, body=payload)
-              response = json.loads(r.data.decode('utf-8'))
-              print(response)
-              return True
-
-          def updateFinding(findingId, productARN):
-              securityhub = boto3.client("securityhub")
-              response = securityhub.batch_update_findings(
-                  FindingIdentifiers=[{
-                      'Id': findingId,
-                      'ProductArn': productARN
-                  }], 
-                  Severity={ 
-                      'Label': 'INFORMATIONAL', 
-                  }
-              ) 
-              print(response)
-
-          def getAgentConfiguraton(computerID, sha256):
-              url = mainUrl+"computers/search?expand=applicationControl"
-              payload = json.dumps({
-                  "searchCriteria": [{"fieldName": "computerID","idValue": computerID,"idTest": "equal"}]})
-              r = http.request("POST", url, headers=headers, body=payload)
-              response = json.loads(r.data.decode('utf-8'))
-              rulesetID = response["computers"][0]['applicationControl']['rulesetID']
-              urlR = mainUrl+"rulesets/{}/rules/search".format(rulesetID)
-              payloadR = json.dumps({
-                  "searchCriteria": [{"fieldName": "sha256","stringTest": "equal","stringValue": sha256},{"fieldName": "action","choiceTest": "not-equal","choiceValue": "block"}]
-              })
-              r = http.request("POST", urlR, headers=headers, body=payloadR)
-              response = json.loads(r.data.decode('utf-8'))
-              if(len(response['applicationControlRules']) > 0):
-                  ruleID = response['ID']
-                  url=mainUrl+"rulesets/{}/rules/{}".format(rulesetID, ruleID)
-                  payload=json.dumps({"action": "block"})
-                  r = http.request("POST", url, headers=headers, body=payload)
-                  response = json.loads(r.data.decode('utf-8'))
-                  print(response)
-                  return True
-              else:
-                  return False
-      Environment:
-        Variables:
-          APIKEY: !Ref APIKEY
   SNSC1WS:
     Type: AWS::SNS::Topic
     Properties:
@@ -428,6 +300,3 @@ Outputs:
   LambdaFunction:
     Description: Lamba Function to send SNS Notification to Security Hub
     Value: !Ref C1WSLambdaSecurityHub
-  CustomActionFunction:
-    Description: Lamba Function to perform custom Action with Cloud One
-    Value: !Ref ApplicationBlockRule
